@@ -30,6 +30,9 @@ This tool streamlines the process of creating and managing Talos Linux VMs by:
 
 ```bash
 docker run -p 8080:8080 \
+  -e LISTEN_ADDR="0.0.0.0" \
+  -e LISTEN_PORT="8080" \
+  -e CONFIG_PATH="/app/config.yaml" \
   -e PROXMOX_BASE_ADDR="https://your-proxmox.example.com:8006/api2/json" \
   -e PROXMOX_TOKEN="user@pve!token=your-token-here" \
   -e AUTH_TOKEN="your-api-auth-token" \
