@@ -1,4 +1,4 @@
-module talos-vm-deployer
+module proxmox-talos-vm-deployer
 
 go 1.21
 

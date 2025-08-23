@@ -2,7 +2,7 @@
 
 This is an HTTP service that deploys Talos Linux VMs on Proxmox VE and automatically registers them with a Talos Kubernetes cluster.
 
-> **⚠️ Mikrotik Dependency Notice**  
+> **⚠️ Mikrotik Dependency Notice**
 > This deployer requires a Mikrotik router acting as DHCP server to discover VM IP addresses. I initially tried using qemu-guest-agent but encountered a deadlock: the agent only starts after VM provisioning, but I need the IP address before provisioning completes. The Mikrotik approach queries DHCP leases by MAC address, eliminating this chicken-and-egg problem. If you know alternative solutions for reliable IP discovery during VM bootstrap, I'd love to hear from you!
 
 ## What do you need to use it:
@@ -244,7 +244,7 @@ curl -X POST http://localhost:8080/api/v1/create \
 
 ```bash
 go mod tidy
-go build -o talos-vm-deployer
+go build -o proxmox-talos-vm-deployer
 ```
 
 ### Run
@@ -267,14 +267,17 @@ export DEBUG="true"
 export LOG_LEVEL="0"
 export VERIFY_SSL="false"
 
-./talos-vm-deployer
+./proxmox-talos-vm-deployer
 ```
 
 ### Docker
 
 ```bash
-docker build -t talos-vm-deployer .
+docker build -t proxmox-talos-vm-deployer .
 docker run -p 8080:8080 \
+  -e LISTEN_ADDR="0.0.0.0" \
+  -e LISTEN_PORT="8080" \
+  -e CONFIG_PATH="/app/config.yaml" \
   -e PROXMOX_BASE_ADDR="https://your-proxmox.example.com:8006/api2/json" \
   -e PROXMOX_TOKEN="user@pve!token=your-token-here" \
   -e AUTH_TOKEN="your-api-auth-token" \
@@ -290,7 +293,7 @@ docker run -p 8080:8080 \
   -e VERIFY_SSL="false" \
   -v $(pwd)/config.yaml:/app/config.yaml \
   -v $(pwd)/talos-machine-config.yaml:/app/talos-machine-config.yaml \
-  talos-vm-deployer
+  proxmox-talos-vm-deployer
 ```
 
 ## Talos Setup
