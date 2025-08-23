@@ -1,0 +1,38 @@
+nodes:
+  -
+    name: proxmox-node1
+    weight: 10
+    suffix: "1"
+    ht: true
+    hugepages: false
+    numa:
+      -
+        id: 0
+        cores:
+          phy: 0-15
+          ht: 32-47
+      -
+        id: 1
+        cores:
+          phy: 16-31
+          ht: 48-63
+    base_templates:
+      -
+        name: talos
+        id: 1100
+
+vm_templates:
+  -
+      name: talos-worker
+      cpu: 4
+      memory: 8192
+      disk: 20
+      cpu_model: x86-64-v3
+      role: worker
+  -
+      name: talos-controlplane
+      cpu: 4
+      memory: 8192
+      disk: 30
+      cpu_model: x86-64-v3
+      role: controlplane

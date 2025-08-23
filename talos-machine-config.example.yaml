@@ -1,0 +1,44 @@
+version: v1alpha1
+debug: false
+persist: true
+machine:
+    type: {role}
+    token: your-machine-token-here
+    ca:
+        crt: LS0tLS1CRUdJTi0tLS0t  # Your cluster CA certificate (base64 encoded)
+    certSANs: []
+    kubelet:
+        image: ghcr.io/siderolabs/kubelet:v1.32.3
+        defaultRuntimeSeccompProfileEnabled: true
+        disableManifestsDirectory: true
+    network:
+        hostname: {vm_name}
+    install:
+        disk: /dev/vda
+        image: factory.talos.dev/installer/your-installer-id:v1.10.6
+        wipe: false
+    sysctls:
+        net.core.somaxconn: 65535
+        net.core.netdev_max_backlog: 4096
+cluster:
+    id: your-cluster-id-here
+    secret: your-cluster-secret-here
+    controlPlane:
+        endpoint: https://your-controlplane:6443
+    clusterName: your-cluster-name
+    network:
+        dnsDomain: cluster.local
+        podSubnets:
+            - 10.244.0.0/16
+        serviceSubnets:
+            - 10.96.0.0/12
+    token: your-cluster-token-here
+    ca:
+        crt: LS0tLS1CRUdJTi0tLS0t  # Your cluster CA certificate (base64 encoded)
+    discovery:
+        enabled: true
+        registries:
+            kubernetes:
+                disabled: false
+            service:
+                disabled: false
