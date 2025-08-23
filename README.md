@@ -372,7 +372,7 @@ The service provides detailed logging. Set `LOG_LEVEL=0` for debug output.
 
 ### Debugging Talos Registration
 
-- Check VM IP discovery: Ensure QEMU guest agent is working
+- Check VM IP discovery: Ensure app can reach Mikrotik DHCP leases API
 - Verify Talos API connectivity: Test connection to VM's Talos API
 - Validate machine config: Ensure template placeholders are correctly replaced
 - Check cluster credentials: Verify tokens and certificates in machine config
