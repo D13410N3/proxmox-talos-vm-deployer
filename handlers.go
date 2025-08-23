@@ -61,6 +61,7 @@ func createVMHandler(w http.ResponseWriter, r *http.Request) {
 
 func createSingleVM(w http.ResponseWriter, r *http.Request) {
 	handlerName := "/api/v1/create"
+	startTime := time.Now()
 
 	// 1. Validate user input
 	baseTemplateName := r.FormValue("base_template")
@@ -297,7 +298,7 @@ func createSingleVM(w http.ResponseWriter, r *http.Request) {
 
 	// 12. Generate Talos configuration
 	logger.Info("Generating Talos configuration...")
-	talosConfig, err := generateTalosConfig(talosMachineTemplate, vmName, vmIP, vmTemplateConfig.Role)
+	talosConfig, err := generateTalosConfig(talosMachineTemplate, vmName, vmIP, vmTemplateConfig.Role, nodeName, vmTemplateName, vmTemplateConfig.CPUModel, vmTemplateConfig.Memory, selectedNode.Suffix, vmTemplateConfig.CPU, fmt.Sprintf("%d", vmTemplateConfig.Disk))
 	if err != nil {
 		logger.Error("Failed to generate Talos config: %s", err.Error())
 		reportError(err)
@@ -326,21 +327,23 @@ func createSingleVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 15. Log success
-	logger.Info("Talos VM creation and registration successful: id=%d, node=%s, name=%s, ip=%s, role=%s", 
-		vmid, nodeName, vmName, vmIP, vmTemplateConfig.Role)
+	// 15. Log success with timing
+	totalDuration := time.Since(startTime)
+	logger.Info("Talos VM creation and registration successful: id=%d, node=%s, name=%s, ip=%s, role=%s, duration=%v",
+		vmid, nodeName, vmName, vmIP, vmTemplateConfig.Role, totalDuration)
 	createdCounter.With(prometheus.Labels{
 		"node":          nodeName,
 		"base_template": baseTemplateName,
 		"vm_template":   vmTemplateName,
 	}).Inc()
 	respData := map[string]interface{}{
-		"vm_id": vmid,
-		"node":  nodeName,
-		"name":  vmName,
-		"ip":    vmIP,
-		"role":  vmTemplateConfig.Role,
-		"reset": resetRequested,
+		"vm_id":            vmid,
+		"node":             nodeName,
+		"name":             vmName,
+		"ip":               vmIP,
+		"role":             vmTemplateConfig.Role,
+		"reset":            resetRequested,
+		"duration_seconds": totalDuration.Seconds(),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(respData)

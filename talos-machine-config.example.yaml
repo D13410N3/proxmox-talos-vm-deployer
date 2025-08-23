@@ -8,7 +8,7 @@ machine:
         crt: LS0tLS1CRUdJTi0tLS0t  # Your cluster CA certificate (base64 encoded)
     certSANs: []
     kubelet:
-        image: ghcr.io/siderolabs/kubelet:v1.32.3
+        image: ghcr.io/siderolabs/kubelet:v1.32.8
         defaultRuntimeSeccompProfileEnabled: true
         disableManifestsDirectory: true
     network:
@@ -20,6 +20,11 @@ machine:
     sysctls:
         net.core.somaxconn: 65535
         net.core.netdev_max_backlog: 4096
+    nodeLabels:
+        # Read this before trying to add labels
+        # https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#noderestriction
+        talos.dev/worker: ""
+        talos.dev/zone: home-{suffix}
 cluster:
     id: your-cluster-id-here
     secret: your-cluster-secret-here

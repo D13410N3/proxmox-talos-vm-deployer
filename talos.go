@@ -38,7 +38,7 @@ type TalosConfig struct {
 	} `yaml:"cluster"`
 }
 
-func generateTalosConfig(templatePath string, vmName string, vmIP string, role string) (string, error) {
+func generateTalosConfig(templatePath string, vmName string, vmIP string, role string, nodeName string, vmTemplate string, cpuModel string, memory int, suffix string, cpuCores int, disk string) (string, error) {
 	templateContent, err := os.ReadFile(templatePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read Talos template file %s: %v", templatePath, err)
@@ -47,7 +47,14 @@ func generateTalosConfig(templatePath string, vmName string, vmIP string, role s
 	config := string(templateContent)
 	config = strings.ReplaceAll(config, "{role}", role)
 	config = strings.ReplaceAll(config, "{vm_name}", vmName)
-	
+	config = strings.ReplaceAll(config, "{node}", nodeName)
+	config = strings.ReplaceAll(config, "{vm_template}", vmTemplate)
+	config = strings.ReplaceAll(config, "{cpu}", cpuModel)
+	config = strings.ReplaceAll(config, "{memory}", fmt.Sprintf("%d", memory))
+	config = strings.ReplaceAll(config, "{suffix}", suffix)
+	config = strings.ReplaceAll(config, "{cpu_cores}", fmt.Sprintf("%d", cpuCores))
+	config = strings.ReplaceAll(config, "{disk}", disk)
+
 	return config, nil
 }
 

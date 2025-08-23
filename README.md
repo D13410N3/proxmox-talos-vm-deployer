@@ -1,50 +1,80 @@
-# Talos VM Deployer
+# Proxmox Talos VM Deployer
 
-This is an HTTP service that deploys Talos Linux VMs on Proxmox VE and automatically registers them with a Talos Kubernetes cluster.
+> **⚠️ Mikrotik Dependency**
+> This deployer requires a Mikrotik router as DHCP server for IP discovery. The qemu-guest-agent approach creates a deadlock: the agent only starts after VM provisioning, but we need the IP before provisioning completes. Mikrotik's DHCP lease API solves this by querying leases via MAC address.
+>
+> If you know alternative solutions for reliable IP discovery during VM bootstrap, or have ideas on fixing the qemu-guest-agent issue, please feel free to reach out!
 
-> **⚠️ Mikrotik Dependency Notice**
-> This deployer requires a Mikrotik router acting as DHCP server to discover VM IP addresses. I initially tried using qemu-guest-agent but encountered a deadlock: the agent only starts after VM provisioning, but I need the IP address before provisioning completes. The Mikrotik approach queries DHCP leases by MAC address, eliminating this chicken-and-egg problem. If you know alternative solutions for reliable IP discovery during VM bootstrap, I'd love to hear from you!
+An HTTP service that automates Talos Linux VM deployment on Proxmox VE and seamlessly registers them with existing Talos Kubernetes clusters.
 
-## What do you need to use it:
+## Overview
 
-- **Proxmox VE**: A Proxmox VE cluster with at least one node running Talos Linux.
-- **Mikrotik router**: this deployer relies on the Mikrotik router to obtain DHCP leases for the VMs.
+This tool streamlines the process of creating and managing Talos Linux VMs by:
+- **Automated VM Creation**: Clones from templates with configurable CPU, memory, and disk settings
+- **Smart Node Selection**: Uses weighted algorithms to distribute VMs across Proxmox nodes
+- **NUMA & CPU Affinity**: Optimizes performance with proper NUMA topology and core pinning
+- **Cluster Integration**: Automatically registers new nodes with existing Talos clusters
+- **IP Discovery**: Uses Mikrotik DHCP leases for reliable VM IP detection
+- **Bulk Operations**: Create multiple VMs in a single API call
 
-## Features
+## Prerequisites
 
-- **Talos Linux Deployment**: Automatically deploys and configures Talos Linux VMs
-- **Kubernetes Cluster Integration**: Registers new nodes with existing Talos clusters
-- **Weighted Node Selection**: Automatically selects the best Proxmox node based on configurable weights
-- **Template-based VM Creation**: Uses predefined VM templates with specific CPU, memory, and disk configurations
-- **NUMA Topology Support**: Configures VMs with proper NUMA topology for optimal performance
-- **CPU Affinity**: Pins VMs to specific CPU cores (physical and/or hyperthreaded)
-- **Hugepages Support**: Enables hugepages for VMs when configured
-- **Bulk VM Creation**: Create multiple VMs in a single API call
-- **VM Management**: Start, stop, reset, and delete VMs
-- **Monitoring**: Prometheus metrics and health checks
-- **Error Tracking**: Sentry integration for error reporting
-- **Mikrotik Integration**: Integrates with Mikrotik router for DHCP lease queries
+- **Proxmox VE** cluster with Talos Linux template
+- **Mikrotik router** configured as DHCP server with REST API enabled
+- **Existing Talos cluster** or control plane
+- **talosctl** installed ([quick install](https://talos.dev/install): `curl -sL https://talos.dev/install | sh`)
+
+## Quick Start
+
+### Using Docker (Recommended)
+
+```bash
+docker run -p 8080:8080 \
+  -e PROXMOX_BASE_ADDR="https://your-proxmox.example.com:8006/api2/json" \
+  -e PROXMOX_TOKEN="user@pve!token=your-token-here" \
+  -e AUTH_TOKEN="your-api-auth-token" \
+  -e SENTRY_DSN="http://foobar@127.0.0.1:1234/1" \
+  -e TALOS_CONTROLPLANE_ENDPOINT="https://your-controlplane:6443" \
+  -e MIKROTIK_IP="10.100.0.1" \
+  -e MIKROTIK_USERNAME="admin" \
+  -e MIKROTIK_PASSWORD="your-password" \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  -v $(pwd)/talos-machine-config.yaml:/app/talos-machine-config.yaml \
+  ghcr.io/d13410n3/proxmox-talos-vm-deployer:latest
+```
+
+### Create Your First VM
+
+```bash
+curl -X POST http://localhost:8080/api/v1/create \
+  -H "X-Auth-Token: your-auth-token" \
+  -d "base_template=talos-template" \
+  -d "vm_template=talos-worker-small"
+```
 
 ## Configuration
 
 ### Environment Variables
 
+#### Required
 - `PROXMOX_BASE_ADDR`: Proxmox VE API base URL (e.g., `https://proxmox.example.com:8006/api2/json`)
 - `PROXMOX_TOKEN`: Proxmox VE API token (format: `user@realm!tokenname=token-value`)
-- `SENTRY_DSN`: Sentry DSN for error tracking. Required, but you can enter something like `http://foobar@127.0.0.1:1234/1` if you don't have Sentry
+- `AUTH_TOKEN`: Authentication token for API access
+- `TALOS_MACHINE_TEMPLATE`: Path to Talos machine configuration template
+- `TALOS_CONTROLPLANE_ENDPOINT`: Talos control plane endpoint
+- `MIKROTIK_IP`: Mikrotik router IP address for DHCP lease queries
+- `MIKROTIK_USERNAME`: Mikrotik API username
+- `MIKROTIK_PASSWORD`: Mikrotik API password
+- `SENTRY_DSN`: Sentry DSN for error tracking (use `http://foobar@127.0.0.1:1234/1` if no Sentry)
+
+#### Optional
 - `LISTEN_ADDR`: HTTP server listen address (default: `0.0.0.0`)
 - `LISTEN_PORT`: HTTP server listen port (default: `8080`)
 - `CONFIG_PATH`: Path to YAML configuration file (default: `config.yaml`)
-- `AUTH_TOKEN`: Authentication token for API access
-- `TALOS_MACHINE_TEMPLATE`: Talos machine configuration template (required)
-- `TALOS_CONTROLPLANE_ENDPOINT`: Talos control plane endpoint (required)
+- `MIKROTIK_PORT`: Mikrotik REST API port (default: `8080`)
 - `DEBUG`: Enable debug mode (default: `false`)
-- `LOG_LEVEL`: Log level (0: Debug, 1: Info, 2: Error) (default: `1`)
+- `LOG_LEVEL`: Log level - 0: Debug, 1: Info, 2: Error (default: `1`)
 - `VERIFY_SSL`: Verify SSL certificates (default: `true`)
-- `MIKROTIK_IP`: IP address of Mikrotik router for DHCP lease queries
-- `MIKROTIK_PORT`: Port for Mikrotik REST API (default: `8080`)
-- `MIKROTIK_USERNAME`: Username for Mikrotik API authentication
-- `MIKROTIK_PASSWORD`: Password for Mikrotik API authentication
 
 ### Configuration File (config.yaml)
 
@@ -93,17 +123,29 @@ vm_templates:
 
 ### Talos Machine Configuration Template
 
-The `TALOS_MACHINE_TEMPLATE` environment variable should contain a Talos machine configuration template with placeholders:
+Create a Talos machine configuration template with placeholders that will be automatically replaced during VM creation:
 
 ```yaml
 version: v1alpha1
 debug: false
 persist: true
 machine:
-    type: {role}  # Will be replaced with actual role (worker/controlplane)
+    type: {role}
     token: your-machine-token-here
+    ca:
+        crt: LS0tLS1CRUdJTi0tLS0t  # Your cluster CA certificate
     network:
-        hostname: {vm_name}  # Will be replaced with actual VM name
+        hostname: {vm_name}
+    install:
+        disk: /dev/vda
+        image: factory.talos.dev/installer/your-installer-id:v1.10.6
+    sysctls:
+        net.core.somaxconn: 65535
+        net.core.netdev_max_backlog: 4096
+    nodeLabels:
+        talos.dev/worker: ""
+        node-role.kubernetes.io/worker: ""
+        topology.kubernetes.io/zone: home-{suffix}
 cluster:
     id: your-cluster-id-here
     secret: your-cluster-secret-here
@@ -117,35 +159,49 @@ cluster:
         serviceSubnets:
             - 10.96.0.0/12
     token: your-cluster-token-here
+    ca:
+        crt: LS0tLS1CRUdJTi0tLS0t  # Your cluster CA certificate
 ```
 
-**Placeholder Syntax:**
-- `{role}` - Replaced with the VM template's role (worker/controlplane)
-- `{vm_name}` - Replaced with the generated or specified VM name
+#### Available Placeholders
 
-## API Endpoints
+| Placeholder | Description | Example |
+|-------------|-------------|---------|
+| `{role}` | VM template role | `worker`, `controlplane` |
+| `{vm_name}` | Generated or specified VM name | `talos-worker-small-1-abc123` |
+| `{node}` | Proxmox node name | `proxmox-node1` |
+| `{vm_template}` | VM template name | `talos-worker-small` |
+| `{cpu}` | CPU model | `kvm64`, `host` |
+| `{cpu_cores}` | Number of CPU cores | `4`, `8` |
+| `{memory}` | Memory in MB | `8192` |
+| `{disk}` | Disk size in GB | `20`, `50` |
+| `{suffix}` | Node suffix from config | `1`, `2` |
+
+## API Reference
 
 ### Create VM
 
 **POST** `/api/v1/create`
 
-Creates a new Talos VM and registers it with the cluster.
+Creates and configures a new Talos VM, then registers it with the cluster.
 
 **Headers:**
-- `X-Auth-Token`: Authentication token
+- `X-Auth-Token`: Your authentication token
 
 **Parameters:**
-- `base_template` (required): Name of the base template to clone from
-- `vm_template` (required): Name of the VM template configuration to use
-- `name` (optional): Custom VM name. If not provided, auto-generated
-- `node` (optional): Specific node to deploy on. If not provided, auto-selected based on weights
-- `numa` (optional): Specific NUMA node ID to use
-- `phy` (optional): Specific physical cores to pin to (e.g., "0-3,8-11")
-- `ht` (optional): Specific hyperthreaded cores to pin to (e.g., "32-35,40-43")
-- `phy_only` (optional): Use only physical cores (set to "1")
-- `ht_only` (optional): Use only hyperthreaded cores (set to "1")
-- `reset` (optional): Reset VM after creation (set to "1")
-- `count` (optional): Number of VMs to create (for bulk creation)
+- `base_template` *(required)*: Proxmox template name to clone from
+- `vm_template` *(required)*: VM configuration template name
+- `name` *(optional)*: Custom VM name (auto-generated if not provided)
+- `node` *(optional)*: Target Proxmox node (auto-selected by weight if not provided)
+- `count` *(optional)*: Number of VMs to create for bulk operations
+- `reset` *(optional)*: Reset VM after creation (`"1"` to enable)
+
+**Advanced CPU/NUMA Options:**
+- `numa` *(optional)*: Specific NUMA node ID
+- `phy` *(optional)*: Physical cores to pin (e.g., `"0-3,8-11"`)
+- `ht` *(optional)*: Hyperthreaded cores to pin (e.g., `"32-35,40-43"`)
+- `phy_only` *(optional)*: Use only physical cores (`"1"` to enable)
+- `ht_only` *(optional)*: Use only hyperthreaded cores (`"1"` to enable)
 
 **Response:**
 ```json
@@ -155,7 +211,8 @@ Creates a new Talos VM and registers it with the cluster.
   "name": "talos-worker-small-1-12345-abc123",
   "ip": "192.168.88.175",
   "role": "worker",
-  "reset": false
+  "reset": false,
+  "duration_seconds": 127.45
 }
 ```
 
@@ -163,65 +220,41 @@ Creates a new Talos VM and registers it with the cluster.
 
 **POST** `/api/v1/delete`
 
-Deletes an existing VM.
-
 **Headers:**
-- `X-Auth-Token`: Authentication token
+- `X-Auth-Token`: Your authentication token
 
 **Parameters:**
-- `vm_name` (optional): Name of the VM to delete
-- `node` (optional): Node where the VM is located (required if using vm_id)
-- `vm_id` (optional): ID of the VM to delete (required if not using vm_name)
-- `stop_method` (optional): Method to stop VM before deletion ("shutdown" or "stop", default: "shutdown")
+- `vm_name` *(optional)*: VM name to delete
+- `node` + `vm_id` *(optional)*: Alternative to vm_name
+- `stop_method` *(optional)*: `"shutdown"` or `"stop"` (default: `"shutdown"`)
 
-**Response:**
-```json
-{
-  "node": "proxmox-node1",
-  "vm_id": 12345
-}
-```
+### Health & Monitoring
 
-### Health Check
-
-**GET** `/health-check`
-
-Returns service health status.
-
-**Response:**
-```
-200 OK
-```
-
-### Metrics
-
-**GET** `/metrics`
-
-Returns Prometheus metrics.
+- **GET** `/health-check` - Service health status
+- **GET** `/metrics` - Prometheus metrics
 
 ## Usage Examples
 
-### Create a Talos worker node
+### Single VM Creation
 
 ```bash
+# Create a worker node
 curl -X POST http://localhost:8080/api/v1/create \
   -H "X-Auth-Token: your-auth-token" \
   -d "base_template=talos-template" \
   -d "vm_template=talos-worker-small"
-```
 
-### Create a Talos control plane node
-
-```bash
+# Create a control plane node
 curl -X POST http://localhost:8080/api/v1/create \
   -H "X-Auth-Token: your-auth-token" \
   -d "base_template=talos-template" \
   -d "vm_template=talos-controlplane"
 ```
 
-### Create multiple worker nodes
+### Bulk VM Creation
 
 ```bash
+# Create 3 worker nodes at once
 curl -X POST http://localhost:8080/api/v1/create \
   -H "X-Auth-Token: your-auth-token" \
   -d "base_template=talos-template" \
@@ -229,50 +262,32 @@ curl -X POST http://localhost:8080/api/v1/create \
   -d "count=3"
 ```
 
-## Building and Running
-
-### Prerequisites
-
-- Go 1.21 or later
-- Access to Proxmox VE cluster with Talos Linux template
-- Proxmox API token with appropriate permissions
-- Existing Talos Kubernetes cluster or control plane
-- Mikrotik router that acts as a DHCP server for the VMs
-- `talosctl` installed (or use Docker image)
-
-### Build
+### Advanced CPU Pinning
 
 ```bash
-go mod tidy
-go build -o proxmox-talos-vm-deployer
+# Pin to specific physical cores
+curl -X POST http://localhost:8080/api/v1/create \
+  -H "X-Auth-Token: your-auth-token" \
+  -d "base_template=talos-template" \
+  -d "vm_template=talos-worker-small" \
+  -d "phy=0-3,8-11" \
+  -d "numa=0"
 ```
 
-### Run
+### VM Deletion
 
 ```bash
-export PROXMOX_BASE_ADDR="https://your-proxmox.example.com:8006/api2/json"
-export PROXMOX_TOKEN="user@pve!token=your-token-here"
-export AUTH_TOKEN="your-api-auth-token"
-export SENTRY_DSN="your-sentry-dsn"
-export LISTEN_ADDR="0.0.0.0"
-export LISTEN_PORT="8080"
-export CONFIG_PATH="config.yaml"
-export TALOS_CONTROLPLANE_ENDPOINT="https://your-controlplane:6443"
-export TALOS_MACHINE_TEMPLATE="./talos-machine-config.yaml"
-export MIKROTIK_IP="10.100.0.1"
-export MIKROTIK_PORT="8080"
-export MIKROTIK_USERNAME="admin"
-export MIKROTIK_PASSWORD="your-password"
-export DEBUG="true"
-export LOG_LEVEL="0"
-export VERIFY_SSL="false"
-
-./proxmox-talos-vm-deployer
+# Delete by VM name
+curl -X POST http://localhost:8080/api/v1/delete \
+  -H "X-Auth-Token: your-auth-token" \
+  -d "vm_name=talos-worker-small-1-12345-abc123"
 ```
 
-### Docker
+## Installation & Deployment
 
-#### Using Pre-built Image (linux/amd64 only)
+### Docker (Recommended)
+
+#### Pre-built Image (linux/amd64)
 
 ```bash
 docker run -p 8080:8080 \
@@ -297,86 +312,165 @@ docker run -p 8080:8080 \
   ghcr.io/d13410n3/proxmox-talos-vm-deployer:latest
 ```
 
-#### Building from Source
+#### Build from Source
 
 ```bash
 docker build -t proxmox-talos-vm-deployer .
 docker run -p 8080:8080 \
-  -e LISTEN_ADDR="0.0.0.0" \
-  -e LISTEN_PORT="8080" \
-  -e CONFIG_PATH="/app/config.yaml" \
   -e PROXMOX_BASE_ADDR="https://your-proxmox.example.com:8006/api2/json" \
-  -e PROXMOX_TOKEN="user@pve!token=your-token-here" \
-  -e AUTH_TOKEN="your-api-auth-token" \
-  -e SENTRY_DSN="your-sentry-dsn" \
-  -e TALOS_CONTROLPLANE_ENDPOINT="https://your-controlplane:6443" \
-  -e TALOS_MACHINE_TEMPLATE="/app/talos-machine-config.yaml" \
-  -e MIKROTIK_IP="10.100.0.1" \
-  -e MIKROTIK_PORT="8080" \
-  -e MIKROTIK_USERNAME="admin" \
-  -e MIKROTIK_PASSWORD="your-password" \
-  -e DEBUG="true" \
-  -e LOG_LEVEL="0" \
-  -e VERIFY_SSL="false" \
+  # ... other environment variables ...
   -v $(pwd)/config.yaml:/app/config.yaml \
   -v $(pwd)/talos-machine-config.yaml:/app/talos-machine-config.yaml \
   proxmox-talos-vm-deployer
 ```
 
-## Talos Setup
+### Native Binary
 
-### Prerequisites
+**Requirements:** Go 1.21+, talosctl
 
-1. **Talos Template**: Create a Talos Linux template in Proxmox with:
-   - Talos Linux ISO installed
-   - ~QEMU Guest Agent enabled~ (not required as it doesn't work)
-   - Network interface configured for DHCP
+```bash
+go mod tidy
+go build -o proxmox-talos-vm-deployer
+./proxmox-talos-vm-deployer
+```
 
-2. **Talos Cluster**: Have an existing Talos cluster or control plane running. Additionally you need `talosctl` installed (simple way - `curl -sL https://talos.dev/install | sh`)
 
-3. **Mikrotik Router**: Configure Mikrotik router with:
-   - REST API enabled
-   - DHCP server running
-   - API user with appropriate permissions
+## Setup Guide
+
+### 1. Proxmox Template Setup
+
+Create a Talos Linux template in Proxmox:
+
+1. **Download Talos ISO** from [Talos releases](https://github.com/siderolabs/talos/releases)
+2. **Create VM** with desired specs (will be used as template)
+3. **Install Talos** using the ISO
+4. **Configure network** for DHCP
+5. **Convert to template** in Proxmox
+
+> **Note:** QEMU Guest Agent is not required and doesn't work properly with this setup.
+
+### 2. Talos Cluster Preparation
+
+- **Existing cluster** or control plane must be running
+- **Install talosctl**: `curl -sL https://talos.dev/install | sh`
+- **Machine config template** with proper cluster credentials
+
+### 3. Mikrotik Router Configuration
+
+```bash
+# Enable REST API
+/ip service set www-ssl disabled=no
+/ip service set api disabled=no
+
+# Create API user (optional, can use admin)
+/user add name=api-user group=full password=your-password
+
+# Ensure DHCP server is running
+/ip dhcp-server print
+```
 
 ## How It Works
 
-1. **VM Creation**: Creates a new VM by cloning from a base template
-2. **Configuration**: Configures CPU, memory, disk, and NUMA topology
-3. **Network Setup**: Configures network interfaces and starts the VM
-4. **IP Discovery**: Gets VM's MAC address and queries Mikrotik DHCP leases to find IP
-5. **Talos Integration**: Generates and applies Talos machine configuration
-6. **Cluster Registration**: Registers the new node with the Talos cluster
+```mermaid
+graph TD
+    A[API Request] --> B[Select Proxmox Node]
+    B --> C[Clone VM from Template]
+    C --> D[Configure CPU/Memory/NUMA]
+    D --> E[Start VM]
+    E --> F[Get VM MAC Address]
+    F --> G[Query Mikrotik DHCP Leases]
+    G --> H[Generate Talos Config]
+    H --> I[Apply Config to VM]
+    I --> J[Register with Cluster]
+    J --> K[VM Ready]
+```
 
-## Monitoring
+**Process Details:**
+1. **Node Selection** - Weighted algorithm chooses optimal Proxmox node
+2. **VM Cloning** - Creates new VM from base Talos template
+3. **Resource Configuration** - Sets CPU, memory, disk, NUMA topology
+4. **Network Bootstrap** - Starts VM and waits for network initialization
+5. **IP Discovery** - Queries Mikrotik DHCP leases using VM's MAC address
+6. **Talos Configuration** - Generates machine config with replaced placeholders
+7. **Cluster Integration** - Applies config and registers node with cluster
 
-The service exposes Prometheus metrics at `/metrics` endpoint:
+## Monitoring & Observability
 
-- `vm_deployer_vms_created_total`: Total number of VMs created
-- `vm_deployer_vms_deleted_total`: Total number of VMs deleted
-- `vm_deployer_handler_errors_total`: Total number of handler errors
+### Prometheus Metrics
+
+Available at `/metrics` endpoint:
+
+| Metric | Description | Labels |
+|--------|-------------|--------|
+| `vm_deployer_vms_created_total` | Total VMs created | `node`, `base_template`, `vm_template` |
+| `vm_deployer_vms_deleted_total` | Total VMs deleted | `node` |
+| `vm_deployer_handler_errors_total` | Total handler errors | `handler` |
+
+### Logging
+
+- **LOG_LEVEL=0**: Debug (verbose output)
+- **LOG_LEVEL=1**: Info (default)
+- **LOG_LEVEL=2**: Error only
+
+### Error Tracking
+
+Sentry integration for error reporting and monitoring.
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **SSL Certificate Verification**: If using self-signed certificates, set `VERIFY_SSL=false`
-2. **Proxmox Token Permissions**: Ensure API token has sufficient permissions for VM operations
-3. **QEMU Guest Agent**: Verify guest agent is installed and running in Talos template
-4. **Network Configuration**: Ensure VMs can reach the Talos control plane endpoint
-5. **Talos Configuration**: Verify machine config template has correct cluster credentials
+| Issue | Solution |
+|-------|----------|
+| **SSL Certificate Errors** | Set `VERIFY_SSL=false` for self-signed certificates |
+| **Proxmox API Permissions** | Ensure token has VM management permissions |
+| **Network Connectivity** | Verify VMs can reach Talos control plane |
+| **IP Discovery Fails** | Check Mikrotik API connectivity and DHCP server |
+| **Talos Registration Fails** | Validate machine config template and cluster credentials |
 
-### Logs
+### Debug Steps
 
-The service provides detailed logging. Set `LOG_LEVEL=0` for debug output.
+1. **Enable Debug Logging**
+   ```bash
+   export LOG_LEVEL=0
+   export DEBUG=true
+   ```
 
-### Debugging Talos Registration
+2. **Test Mikrotik Connectivity**
+   ```bash
+   curl -u admin:password http://mikrotik-ip:8080/rest/ip/dhcp-server/lease
+   ```
 
-- Check VM IP discovery: Ensure app can reach Mikrotik DHCP leases API
-- Verify Talos API connectivity: Test connection to VM's Talos API
-- Validate machine config: Ensure template placeholders are correctly replaced
-- Check cluster credentials: Verify tokens and certificates in machine config
+3. **Verify Talos Config**
+   ```bash
+   talosctl validate --config your-machine-config.yaml
+   ```
+
+4. **Check VM Network**
+   ```bash
+   # From Proxmox node
+   qm guest cmd <vmid> network-get-interfaces
+   ```
+
+### Support
+
+- **Logs**: Check service logs with `LOG_LEVEL=0`
+- **Metrics**: Monitor `/metrics` endpoint for errors
+- **Sentry**: Review error tracking dashboard
+
+## Features
+
+- ✅ **Automated VM Deployment** - Clone and configure VMs from templates
+- ✅ **Smart Node Selection** - Weighted distribution across Proxmox nodes
+- ✅ **NUMA Optimization** - Proper topology configuration for performance
+- ✅ **CPU Affinity** - Pin VMs to specific physical/hyperthreaded cores
+- ✅ **Bulk Operations** - Create multiple VMs in single API call
+- ✅ **Template Placeholders** - Dynamic configuration replacement
+- ✅ **IP Discovery** - Mikrotik DHCP lease integration
+- ✅ **Cluster Integration** - Automatic Talos cluster registration
+- ✅ **Monitoring** - Prometheus metrics and health checks
+- ✅ **Error Tracking** - Sentry integration for observability
 
 ## License
 
-This project is licensed under the MIT License.
+MIT License - see LICENSE file for details.

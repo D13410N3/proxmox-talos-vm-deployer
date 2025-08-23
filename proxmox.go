@@ -561,14 +561,13 @@ func findVMByName(node string, vmName string) (int, error) {
 	return 0, fmt.Errorf("VM with name %s not found on node %s", vmName, node)
 }
 
-
 // getVMNetworkConfig retrieves the network configuration of a VM to get MAC address
 func getVMNetworkConfig(node string, vmid int) (string, error) {
 	config, err := getVMConfig(node, vmid)
 	if err != nil {
 		return "", fmt.Errorf("failed to get VM config: %w", err)
 	}
-	
+
 	// Look for network interface (net0, net1, etc.)
 	for key, value := range config {
 		if strings.HasPrefix(key, "net") {
@@ -588,7 +587,7 @@ func getVMNetworkConfig(node string, vmid int) (string, error) {
 			}
 		}
 	}
-	
+
 	return "", fmt.Errorf("no network interface with MAC address found for VM %d", vmid)
 }
 
@@ -599,27 +598,27 @@ func getVMIPAddressByMAC(node string, vmid int) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get VM MAC address: %w", err)
 	}
-	
+
 	logger.Info("VM %d MAC address: %s", vmid, macAddress)
-	
+
 	// Retry logic for getting IP address as VM might need time to get DHCP lease
 	maxRetries := 100
 	retryDelay := 3 * time.Second
-	
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		ip, err := findIPByMACAddress(macAddress)
 		if err == nil {
 			logger.Info("Found IP address for MAC %s: %s", macAddress, ip)
 			return ip, nil
 		}
-		
+
 		if attempt == maxRetries {
 			return "", fmt.Errorf("failed to find IP for MAC %s after %d attempts: %w", macAddress, maxRetries, err)
 		}
-		
+
 		logger.Info("Attempt %d/%d: No IP found for MAC %s, retrying in %v: %v", attempt, maxRetries, macAddress, retryDelay, err)
 		time.Sleep(retryDelay)
 	}
-	
+
 	return "", fmt.Errorf("failed to get VM IP address after %d attempts", maxRetries)
 }
