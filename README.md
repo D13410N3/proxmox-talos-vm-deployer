@@ -31,7 +31,7 @@ This is an HTTP service that deploys Talos Linux VMs on Proxmox VE and automatic
 
 - `PROXMOX_BASE_ADDR`: Proxmox VE API base URL (e.g., `https://proxmox.example.com:8006/api2/json`)
 - `PROXMOX_TOKEN`: Proxmox VE API token (format: `user@realm!tokenname=token-value`)
-- `SENTRY_DSN`: Sentry DSN for error tracking
+- `SENTRY_DSN`: Sentry DSN for error tracking. Required, but you can enter something like `http://foobar@127.0.0.1:1234/1` if you don't have Sentry
 - `LISTEN_ADDR`: HTTP server listen address (default: `0.0.0.0`)
 - `LISTEN_PORT`: HTTP server listen port (default: `8080`)
 - `CONFIG_PATH`: Path to YAML configuration file (default: `config.yaml`)
@@ -272,6 +272,33 @@ export VERIFY_SSL="false"
 
 ### Docker
 
+#### Using Pre-built Image (linux/amd64 only)
+
+```bash
+docker run -p 8080:8080 \
+  -e LISTEN_ADDR="0.0.0.0" \
+  -e LISTEN_PORT="8080" \
+  -e CONFIG_PATH="/app/config.yaml" \
+  -e PROXMOX_BASE_ADDR="https://your-proxmox.example.com:8006/api2/json" \
+  -e PROXMOX_TOKEN="user@pve!token=your-token-here" \
+  -e AUTH_TOKEN="your-api-auth-token" \
+  -e SENTRY_DSN="your-sentry-dsn" \
+  -e TALOS_CONTROLPLANE_ENDPOINT="https://your-controlplane:6443" \
+  -e TALOS_MACHINE_TEMPLATE="/app/talos-machine-config.yaml" \
+  -e MIKROTIK_IP="10.100.0.1" \
+  -e MIKROTIK_PORT="8080" \
+  -e MIKROTIK_USERNAME="admin" \
+  -e MIKROTIK_PASSWORD="your-password" \
+  -e DEBUG="true" \
+  -e LOG_LEVEL="0" \
+  -e VERIFY_SSL="false" \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  -v $(pwd)/talos-machine-config.yaml:/app/talos-machine-config.yaml \
+  ghcr.io/d13410n3/proxmox-talos-vm-deployer:latest
+```
+
+#### Building from Source
+
 ```bash
 docker build -t proxmox-talos-vm-deployer .
 docker run -p 8080:8080 \
@@ -302,7 +329,7 @@ docker run -p 8080:8080 \
 
 1. **Talos Template**: Create a Talos Linux template in Proxmox with:
    - Talos Linux ISO installed
-   - QEMU Guest Agent enabled
+   - ~QEMU Guest Agent enabled~ (not required as it doesn't work)
    - Network interface configured for DHCP
 
 2. **Talos Cluster**: Have an existing Talos cluster or control plane running
