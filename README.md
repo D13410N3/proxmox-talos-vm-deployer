@@ -332,7 +332,7 @@ docker run -p 8080:8080 \
    - ~QEMU Guest Agent enabled~ (not required as it doesn't work)
    - Network interface configured for DHCP
 
-2. **Talos Cluster**: Have an existing Talos cluster or control plane running
+2. **Talos Cluster**: Have an existing Talos cluster or control plane running. Additionally you need `talosctl` installed (simple way - `curl -sL https://talos.dev/install | sh`)
 
 3. **Mikrotik Router**: Configure Mikrotik router with:
    - REST API enabled
