@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/caarlos0/env/v6"
@@ -17,23 +18,46 @@ import (
 )
 
 var (
-	config                    Config
-	authToken                 string
 	proxmoxBaseAddr           string
 	proxmoxToken              string
-	logger                    *Logger
+	authToken                 string
+	sentryDSN                 string
+	listenAddr                string
+	listenPort                string
+	configPath                string
 	talosMachineTemplate      string
 	talosControlPlaneEndpoint string
-	mikrotikIP                string
-	mikrotikPort              string
-	mikrotikUsername          string
-	mikrotikPassword          string
+	debugMode                 bool
+	logLevel                  int
+	verifySSL                 bool
+	talosVMInterface          string
+	logger                    *Logger
+	talosMachineConfig        Config
+	config                    Config
+	appConfig                 AppConfig
+	httpClient                *http.Client
 )
+
+// Helper function to get environment variable with default value
+func getEnvWithDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// Helper function to get log level from environment
+func getLogLevel() int {
+	levelStr := getEnvWithDefault("LOG_LEVEL", "1")
+	if level, err := strconv.Atoi(levelStr); err == nil {
+		return level
+	}
+	return 1 // Default to Info level
+}
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	var appConfig AppConfig
 	if err := env.Parse(&appConfig); err != nil {
 		log.Fatalf("Failed to parse environment variables: %s", err)
 	}
@@ -43,10 +67,6 @@ func main() {
 	authToken = appConfig.AuthToken
 	talosMachineTemplate = appConfig.TalosMachineTemplate
 	talosControlPlaneEndpoint = appConfig.TalosControlPlaneEndpoint
-	mikrotikIP = appConfig.MikrotikIP
-	mikrotikPort = appConfig.MikrotikPort
-	mikrotikUsername = appConfig.MikrotikUsername
-	mikrotikPassword = appConfig.MikrotikPassword
 
 	// Initialize HTTP client with SSL verification setting
 	httpClient = &http.Client{
@@ -75,6 +95,9 @@ func main() {
 		logger.Error("Failed to parse config: %s", err)
 		os.Exit(1)
 	}
+
+	// Set the global talosMachineConfig to the loaded config
+	talosMachineConfig = config
 
 	initMetrics()
 

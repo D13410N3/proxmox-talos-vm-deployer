@@ -286,7 +286,7 @@ func createSingleVM(w http.ResponseWriter, r *http.Request) {
 
 	// 11. Get VM IP address for Talos registration
 	logger.Info("Getting VM IP address for Talos registration...")
-	vmIP, err := getVMIPAddressByMAC(nodeName, vmid)
+	vmIP, err := getVMIPAddress(nodeName, vmid)
 	if err != nil {
 		logger.Error("Failed to get VM IP address: %s", err.Error())
 		reportError(err)

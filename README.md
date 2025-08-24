@@ -1,9 +1,8 @@
 # Proxmox Talos VM Deployer
 
-> **⚠️ Mikrotik Dependency**
-> This deployer requires a Mikrotik router as DHCP server for IP discovery. The qemu-guest-agent approach creates a deadlock: the agent only starts after VM provisioning, but we need the IP before provisioning completes. Mikrotik's DHCP lease API solves this by querying leases via MAC address.
->
-> If you know alternative solutions for reliable IP discovery during VM bootstrap, or have ideas on fixing the qemu-guest-agent issue, please feel free to reach out!
+> **💡 IP Discovery**
+> This deployer uses **qemu-guest-agent** for VM IP discovery - direct communication with the VM guest agent.
+> Ensure qemu-guest-agent is installed and enabled in your Talos template for reliable IP detection. Visit https://factory.talos.dev/ to generate your own image or use [mine](https://factory.talos.dev/?arch=amd64&cmdline=mitigations%3Doff&cmdline-set=true&extensions=-&extensions=siderolabs%2Fqemu-guest-agent&platform=nocloud&target=cloud&version=1.10.6)
 
 An HTTP service that automates Talos Linux VM deployment on Proxmox VE and seamlessly registers them with existing Talos Kubernetes clusters.
 
@@ -14,13 +13,12 @@ This tool streamlines the process of creating and managing Talos Linux VMs by:
 - **Smart Node Selection**: Uses weighted algorithms to distribute VMs across Proxmox nodes
 - **NUMA & CPU Affinity**: Optimizes performance with proper NUMA topology and core pinning
 - **Cluster Integration**: Automatically registers new nodes with existing Talos clusters
-- **IP Discovery**: Uses Mikrotik DHCP leases for reliable VM IP detection
+- **IP Discovery**: Uses qemu-guest-agent for reliable VM IP detection
 - **Bulk Operations**: Create multiple VMs in a single API call
 
 ## Prerequisites
 
-- **Proxmox VE** cluster with Talos Linux template
-- **Mikrotik router** configured as DHCP server with REST API enabled
+- **Proxmox VE** cluster with Talos Linux template (with qemu-guest-agent enabled)
 - **Existing Talos cluster** or control plane
 - **talosctl** installed ([quick install](https://talos.dev/install): `curl -sL https://talos.dev/install | sh`)
 
@@ -38,9 +36,8 @@ docker run -p 8080:8080 \
   -e AUTH_TOKEN="your-api-auth-token" \
   -e SENTRY_DSN="http://foobar@127.0.0.1:1234/1" \
   -e TALOS_CONTROLPLANE_ENDPOINT="https://your-controlplane:6443" \
-  -e MIKROTIK_IP="10.100.0.1" \
-  -e MIKROTIK_USERNAME="admin" \
-  -e MIKROTIK_PASSWORD="your-password" \
+  -e TALOS_MACHINE_TEMPLATE="/app/talos-machine-config.yaml" \
+  -e TALOS_VM_INTERFACE="eth0" \
   -v $(pwd)/config.yaml:/app/config.yaml \
   -v $(pwd)/talos-machine-config.yaml:/app/talos-machine-config.yaml \
   ghcr.io/d13410n3/proxmox-talos-vm-deployer:latest
@@ -65,19 +62,17 @@ curl -X POST http://localhost:8080/api/v1/create \
 - `AUTH_TOKEN`: Authentication token for API access
 - `TALOS_MACHINE_TEMPLATE`: Path to Talos machine configuration template
 - `TALOS_CONTROLPLANE_ENDPOINT`: Talos control plane endpoint
-- `MIKROTIK_IP`: Mikrotik router IP address for DHCP lease queries
-- `MIKROTIK_USERNAME`: Mikrotik API username
-- `MIKROTIK_PASSWORD`: Mikrotik API password
 - `SENTRY_DSN`: Sentry DSN for error tracking (use `http://foobar@127.0.0.1:1234/1` if no Sentry)
 
 #### Optional
 - `LISTEN_ADDR`: HTTP server listen address (default: `0.0.0.0`)
 - `LISTEN_PORT`: HTTP server listen port (default: `8080`)
 - `CONFIG_PATH`: Path to YAML configuration file (default: `config.yaml`)
-- `MIKROTIK_PORT`: Mikrotik REST API port (default: `8080`)
+- `TALOS_VM_INTERFACE`: Network interface to check for IP address (default: `eth0`)
 - `DEBUG`: Enable debug mode (default: `false`)
 - `LOG_LEVEL`: Log level - 0: Debug, 1: Info, 2: Error (default: `1`)
 - `VERIFY_SSL`: Verify SSL certificates (default: `true`)
+- `TALOS_VM_INTERFACE`: Network interface to check for IP address (default: `eth0`)
 
 ### Configuration File (config.yaml)
 
@@ -303,10 +298,7 @@ docker run -p 8080:8080 \
   -e SENTRY_DSN="your-sentry-dsn" \
   -e TALOS_CONTROLPLANE_ENDPOINT="https://your-controlplane:6443" \
   -e TALOS_MACHINE_TEMPLATE="/app/talos-machine-config.yaml" \
-  -e MIKROTIK_IP="10.100.0.1" \
-  -e MIKROTIK_PORT="8080" \
-  -e MIKROTIK_USERNAME="admin" \
-  -e MIKROTIK_PASSWORD="your-password" \
+  -e TALOS_VM_INTERFACE="eth0" \
   -e DEBUG="true" \
   -e LOG_LEVEL="0" \
   -e VERIFY_SSL="false" \
@@ -347,10 +339,11 @@ Create a Talos Linux template in Proxmox:
 1. **Download Talos ISO** from [Talos releases](https://github.com/siderolabs/talos/releases)
 2. **Create VM** with desired specs (will be used as template)
 3. **Install Talos** using the ISO
-4. **Configure network** for DHCP
-5. **Convert to template** in Proxmox
+4. **Enable QEMU Guest Agent** in VM options
+5. **Configure network** for DHCP
+6. **Convert to template** in Proxmox
 
-> **Note:** QEMU Guest Agent is not required and doesn't work properly with this setup.
+> **Note:** QEMU Guest Agent is required for IP discovery. Ensure it's enabled in your template.
 
 ### 2. Talos Cluster Preparation
 
@@ -358,19 +351,6 @@ Create a Talos Linux template in Proxmox:
 - **Install talosctl**: `curl -sL https://talos.dev/install | sh`
 - **Machine config template** with proper cluster credentials
 
-### 3. Mikrotik Router Configuration
-
-```bash
-# Enable REST API
-/ip service set www-ssl disabled=no
-/ip service set api disabled=no
-
-# Create API user (optional, can use admin)
-/user add name=api-user group=full password=your-password
-
-# Ensure DHCP server is running
-/ip dhcp-server print
-```
 
 ## How It Works
 
@@ -380,12 +360,11 @@ graph TD
     B --> C[Clone VM from Template]
     C --> D[Configure CPU/Memory/NUMA]
     D --> E[Start VM]
-    E --> F[Get VM MAC Address]
-    F --> G[Query Mikrotik DHCP Leases]
-    G --> H[Generate Talos Config]
-    H --> I[Apply Config to VM]
-    I --> J[Register with Cluster]
-    J --> K[VM Ready]
+    E --> F[Query Guest Agent for IP]
+    F --> G[Generate Talos Config]
+    G --> H[Apply Config to VM]
+    H --> I[Register with Cluster]
+    I --> J[VM Ready]
 ```
 
 **Process Details:**
@@ -393,7 +372,7 @@ graph TD
 2. **VM Cloning** - Creates new VM from base Talos template
 3. **Resource Configuration** - Sets CPU, memory, disk, NUMA topology
 4. **Network Bootstrap** - Starts VM and waits for network initialization
-5. **IP Discovery** - Queries Mikrotik DHCP leases using VM's MAC address
+5. **IP Discovery** - Uses qemu-guest-agent to get VM IP address
 6. **Talos Configuration** - Generates machine config with replaced placeholders
 7. **Cluster Integration** - Applies config and registers node with cluster
 
@@ -428,7 +407,7 @@ Sentry integration for error reporting and monitoring.
 | **SSL Certificate Errors** | Set `VERIFY_SSL=false` for self-signed certificates |
 | **Proxmox API Permissions** | Ensure token has VM management permissions |
 | **Network Connectivity** | Verify VMs can reach Talos control plane |
-| **IP Discovery Fails** | Check Mikrotik API connectivity and DHCP server |
+| **IP Discovery Fails** | Check qemu-guest-agent is enabled and running in VM |
 | **Talos Registration Fails** | Validate machine config template and cluster credentials |
 
 ### Debug Steps
@@ -439,9 +418,10 @@ Sentry integration for error reporting and monitoring.
    export DEBUG=true
    ```
 
-2. **Test Mikrotik Connectivity**
+2. **Test Guest Agent**
    ```bash
-   curl -u admin:password http://mikrotik-ip:8080/rest/ip/dhcp-server/lease
+   # From Proxmox node
+   qm guest cmd <vmid> network-get-interfaces
    ```
 
 3. **Verify Talos Config**
@@ -449,11 +429,6 @@ Sentry integration for error reporting and monitoring.
    talosctl validate --config your-machine-config.yaml
    ```
 
-4. **Check VM Network**
-   ```bash
-   # From Proxmox node
-   qm guest cmd <vmid> network-get-interfaces
-   ```
 
 ### Support
 
@@ -469,7 +444,7 @@ Sentry integration for error reporting and monitoring.
 - ✅ **CPU Affinity** - Pin VMs to specific physical/hyperthreaded cores
 - ✅ **Bulk Operations** - Create multiple VMs in single API call
 - ✅ **Template Placeholders** - Dynamic configuration replacement
-- ✅ **IP Discovery** - Mikrotik DHCP lease integration
+- ✅ **IP Discovery** - QEMU Guest Agent integration
 - ✅ **Cluster Integration** - Automatic Talos cluster registration
 - ✅ **Monitoring** - Prometheus metrics and health checks
 - ✅ **Error Tracking** - Sentry integration for observability

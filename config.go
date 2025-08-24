@@ -53,10 +53,6 @@ type AppConfig struct {
 	AuthToken                 string `env:"AUTH_TOKEN,required"`
 	TalosMachineTemplate      string `env:"TALOS_MACHINE_TEMPLATE,required"`
 	TalosControlPlaneEndpoint string `env:"TALOS_CONTROLPLANE_ENDPOINT,required"`
-	MikrotikIP                string `env:"MIKROTIK_IP,required"`
-	MikrotikPort              string `env:"MIKROTIK_PORT" envDefault:"8080"`
-	MikrotikUsername          string `env:"MIKROTIK_USERNAME,required"`
-	MikrotikPassword          string `env:"MIKROTIK_PASSWORD,required"`
 	Debug                     bool   `env:"DEBUG" envDefault:"false"`
 	LogLevel                  int    `env:"LOG_LEVEL" envDefault:"1"`     // 0: Debug, 1: Info, 2: Error
 	VerifySSL                 bool   `env:"VERIFY_SSL" envDefault:"true"` // Controls SSL certificate verification

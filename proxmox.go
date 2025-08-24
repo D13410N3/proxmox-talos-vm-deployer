@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-var httpClient *http.Client
-
 func getNextID() (int, error) {
 	endpoint := fmt.Sprintf("%s/cluster/nextid", proxmoxBaseAddr)
 	req, err := http.NewRequest("GET", endpoint, nil)
@@ -561,64 +559,115 @@ func findVMByName(node string, vmName string) (int, error) {
 	return 0, fmt.Errorf("VM with name %s not found on node %s", vmName, node)
 }
 
-// getVMNetworkConfig retrieves the network configuration of a VM to get MAC address
-func getVMNetworkConfig(node string, vmid int) (string, error) {
-	config, err := getVMConfig(node, vmid)
+// getVMIPAddressFromGuestAgent gets VM IP address using qemu-guest-agent
+func getVMIPAddressFromGuestAgent(node string, vmid int) (string, error) {
+	endpoint := fmt.Sprintf("%s/nodes/%s/qemu/%d/agent/network-get-interfaces", proxmoxBaseAddr, node, vmid)
+
+	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to get VM config: %w", err)
+		return "", err
 	}
+	req.Header.Add("Authorization", "PVEAPIToken="+proxmoxToken)
 
-	// Look for network interface (net0, net1, etc.)
-	for key, value := range config {
-		if strings.HasPrefix(key, "net") {
-			if netConfig, ok := value.(string); ok {
-				// Parse MAC address from network config
-				// Format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
-				parts := strings.Split(netConfig, ",")
-				for _, part := range parts {
-					if strings.Contains(part, "=") {
-						kv := strings.Split(part, "=")
-						if len(kv) == 2 && (kv[0] == "virtio" || kv[0] == "e1000" || kv[0] == "rtl8139") {
-							// The value should be the MAC address
-							return kv[1], nil
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return "", fmt.Errorf("no network interface with MAC address found for VM %d", vmid)
-}
-
-// getVMIPAddressByMAC gets VM IP address using MAC address lookup via Mikrotik DHCP
-func getVMIPAddressByMAC(node string, vmid int) (string, error) {
-	// Get VM's MAC address
-	macAddress, err := getVMNetworkConfig(node, vmid)
-	if err != nil {
-		return "", fmt.Errorf("failed to get VM MAC address: %w", err)
-	}
-
-	logger.Info("VM %d MAC address: %s", vmid, macAddress)
-
-	// Retry logic for getting IP address as VM might need time to get DHCP lease
+	// Retry logic for getting IP address as guest agent might need time to start
 	maxRetries := 100
 	retryDelay := 3 * time.Second
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		ip, err := findIPByMACAddress(macAddress)
-		if err == nil {
-			logger.Info("Found IP address for MAC %s: %s", macAddress, ip)
-			return ip, nil
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			if attempt == maxRetries {
+				return "", fmt.Errorf("failed to connect to guest agent after %d attempts: %w", maxRetries, err)
+			}
+			logger.Info("Attempt %d/%d: Guest agent not ready, retrying in %v: %v", attempt, maxRetries, retryDelay, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			if attempt == maxRetries {
+				return "", fmt.Errorf("failed to read guest agent response after %d attempts: %w", maxRetries, err)
+			}
+			logger.Info("Attempt %d/%d: Failed to read response, retrying in %v: %v", attempt, maxRetries, retryDelay, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		logger.Debug("Guest agent network interfaces response: %s", string(body))
+
+		var result struct {
+			Data struct {
+				Result []struct {
+					Name        string `json:"name"`
+					IPAddresses []struct {
+						IPAddress     string `json:"ip-address"`
+						IPAddressType string `json:"ip-address-type"`
+					} `json:"ip-addresses"`
+				} `json:"result"`
+			} `json:"data"`
+		}
+
+		if err := json.Unmarshal(body, &result); err != nil {
+			if attempt == maxRetries {
+				return "", fmt.Errorf("failed to parse guest agent response after %d attempts: %w", maxRetries, err)
+			}
+			logger.Info("Attempt %d/%d: Failed to parse response, retrying in %v: %v", attempt, maxRetries, retryDelay, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		// Look for IPv4 address on the specified interface
+		targetInterface := talosVMInterface
+		if targetInterface == "" {
+			targetInterface = "eth0" // fallback default
+		}
+
+		for _, iface := range result.Data.Result {
+			// Skip loopback interface
+			if iface.Name == "lo" {
+				continue
+			}
+
+			// Check if this is the target interface
+			if iface.Name == targetInterface {
+				for _, addr := range iface.IPAddresses {
+					if addr.IPAddressType == "ipv4" && !strings.HasPrefix(addr.IPAddress, "127.") {
+						logger.Info("Found IP address from guest agent on interface %s: %s", targetInterface, addr.IPAddress)
+						return addr.IPAddress, nil
+					}
+				}
+			}
+		}
+
+		// If target interface not found, try any non-loopback interface as fallback
+		logger.Debug("Target interface %s not found, trying any available interface", targetInterface)
+		for _, iface := range result.Data.Result {
+			if iface.Name == "lo" {
+				continue // Skip loopback interface
+			}
+			for _, addr := range iface.IPAddresses {
+				if addr.IPAddressType == "ipv4" && !strings.HasPrefix(addr.IPAddress, "127.") {
+					logger.Info("Found IP address from guest agent on fallback interface %s: %s", iface.Name, addr.IPAddress)
+					return addr.IPAddress, nil
+				}
+			}
 		}
 
 		if attempt == maxRetries {
-			return "", fmt.Errorf("failed to find IP for MAC %s after %d attempts: %w", macAddress, maxRetries, err)
+			return "", fmt.Errorf("no valid IPv4 address found in guest agent response after %d attempts", maxRetries)
 		}
 
-		logger.Info("Attempt %d/%d: No IP found for MAC %s, retrying in %v: %v", attempt, maxRetries, macAddress, retryDelay, err)
+		logger.Info("Attempt %d/%d: No valid IP found, retrying in %v", attempt, maxRetries, retryDelay)
 		time.Sleep(retryDelay)
 	}
 
-	return "", fmt.Errorf("failed to get VM IP address after %d attempts", maxRetries)
+	return "", fmt.Errorf("failed to get VM IP address from guest agent after %d attempts", maxRetries)
+}
+
+// getVMIPAddress gets VM IP address using qemu-guest-agent
+func getVMIPAddress(node string, vmid int) (string, error) {
+	logger.Info("Getting VM IP using qemu-guest-agent...")
+	return getVMIPAddressFromGuestAgent(node, vmid)
 }
