@@ -15,6 +15,7 @@ This tool streamlines the process of creating and managing Talos Linux VMs by:
 - **Cluster Integration**: Automatically registers new nodes with existing Talos clusters
 - **IP Discovery**: Uses qemu-guest-agent for reliable VM IP detection
 - **Bulk Operations**: Create multiple VMs in a single API call
+- **Kubernetes ready**: You can deploy this application directly to your Kubernetes cluster so you can deploy Kubernetes using Kubernetes (yo-dawg)
 
 ## Prerequisites
 
